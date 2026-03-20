@@ -7,6 +7,10 @@ edition.workspace = true
 name = "s-kvm-daemon"
 path = "src/main.rs"
 
+[lib]
+name = "s_kvm_daemon"
+path = "src/lib.rs"
+
 [dependencies]
 s-kvm-core = { workspace = true }
 s-kvm-config = { workspace = true }
@@ -29,3 +33,7 @@ futures = { workspace = true }
 [dev-dependencies]
 mockall = { workspace = true }
 tokio = { workspace = true }
+uuid = { workspace = true }
+serde_json = { workspace = true }
+s-kvm-core = { workspace = true }
+s-kvm-config = { workspace = true }

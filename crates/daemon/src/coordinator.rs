@@ -321,13 +321,11 @@ impl Coordinator {
                                         let _ = clipboard_incoming_tx.send(msg.clone()).await;
                                     }
                                 }
-                                DataMessage::Fido2Request { .. } => {
-                                    tracing::debug!(peer = %peer_id, "FIDO2 request received");
-                                    // TODO: Route to FIDO2 relay
+                                DataMessage::Fido2Request { request_id, command, .. } => {
+                                    tracing::info!(peer = %peer_id, request_id, command, "FIDO2 request received (relay not yet active)");
                                 }
-                                DataMessage::Fido2Response { .. } => {
-                                    tracing::debug!(peer = %peer_id, "FIDO2 response received");
-                                    // TODO: Route to FIDO2 relay
+                                DataMessage::Fido2Response { request_id, status, .. } => {
+                                    tracing::info!(peer = %peer_id, request_id, status, "FIDO2 response received (relay not yet active)");
                                 }
                             }
                         }

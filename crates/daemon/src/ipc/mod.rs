@@ -277,8 +277,19 @@ where
             }
             IpcCommand::UpdateScreenLayout(links) => {
                 tracing::info!("IPC: Update screen layout with {} links", links.len());
-                // TODO: Update screen layout
-                IpcResponse::Ok
+                let mut new_config = config.clone();
+                new_config.screen_links = links;
+                let save_result =
+                    s_kvm_config::save_config(&new_config).map_err(|e| e.to_string());
+                match save_result {
+                    Ok(()) => {
+                        let _ = event_tx
+                            .send(CoordinatorEvent::ConfigChanged(new_config))
+                            .await;
+                        IpcResponse::Ok
+                    }
+                    Err(e) => IpcResponse::Error(format!("Failed to save config: {}", e)),
+                }
             }
         };
 
