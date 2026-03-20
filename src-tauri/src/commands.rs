@@ -137,19 +137,7 @@ pub async fn disconnect_peer(
 
 #[tauri::command]
 pub async fn get_displays() -> Result<Vec<DisplayInfo>, String> {
-    // Query system displays
-    // For now, return the primary display info
-    Ok(vec![DisplayInfo {
-        id: 0,
-        name: "Primary Display".to_string(),
-        x: 0,
-        y: 0,
-        width: 1920,
-        height: 1080,
-        refresh_rate: 60.0,
-        scale_factor: 1.0,
-        is_primary: true,
-    }])
+    Ok(s_kvm_core::display::enumerate_displays())
 }
 
 #[tauri::command]

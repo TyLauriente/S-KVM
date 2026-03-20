@@ -1,6 +1,8 @@
-#![forbid(unsafe_code)]
+// Windows display enumeration (EnumDisplayMonitors) requires unsafe FFI.
+#![cfg_attr(not(target_os = "windows"), forbid(unsafe_code))]
 
 pub mod clipboard;
+pub mod display;
 pub mod events;
 pub mod platform;
 pub mod protocol;
