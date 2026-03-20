@@ -11,6 +11,8 @@ thiserror = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
 tracing = { workspace = true }
+arboard = "3"
+tokio = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
