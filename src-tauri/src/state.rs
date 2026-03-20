@@ -1,7 +1,7 @@
 //! Shared application state for the Tauri app.
 
 use s_kvm_config::AppConfig;
-use s_kvm_core::{ConnectionState, DisplayInfo, PeerInfo, PeerId};
+use s_kvm_core::{ConnectionState, PeerInfo};
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::Instant;
