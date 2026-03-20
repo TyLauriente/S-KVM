@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { safeInvoke } from "../mocks/tauriMock";
 import { useToast } from "./Toast";
 import { usePeers, useScreenLayout } from "../hooks/useTauriCommands";
 
@@ -188,7 +188,7 @@ function MonitorLayout() {
 
   // Load displays from backend on mount
   useEffect(() => {
-    invoke<Array<{ id: number; name: string; width: number; height: number; x: number; y: number; is_primary: boolean }>>("get_displays")
+    safeInvoke<Array<{ id: number; name: string; width: number; height: number; x: number; y: number; is_primary: boolean }>>("get_displays")
       .then((displays) => {
         if (displays.length > 0) {
           setMonitors(

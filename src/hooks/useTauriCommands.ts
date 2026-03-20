@@ -1,5 +1,3 @@
-import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useState } from "react";
 import type {
   AppConfig,
@@ -7,6 +5,7 @@ import type {
   PeerStatus,
   ScreenLayoutUpdate,
 } from "../types";
+import { isTauri, safeInvoke } from "../mocks/tauriMock";
 
 // --- Config hooks ---
 
@@ -18,7 +17,7 @@ export function useConfig() {
   const loadConfig = useCallback(async () => {
     try {
       setLoading(true);
-      const cfg = await invoke<AppConfig>("get_config");
+      const cfg = await safeInvoke<AppConfig>("get_config");
       setConfig(cfg);
       setError(null);
     } catch (e) {
@@ -30,7 +29,7 @@ export function useConfig() {
 
   const saveConfig = useCallback(async (newConfig: AppConfig) => {
     try {
-      await invoke("save_config", { config: newConfig });
+      await safeInvoke("save_config", { config: newConfig });
       setConfig(newConfig);
       setError(null);
     } catch (e) {
@@ -54,7 +53,7 @@ export function usePeers() {
 
   const loadPeers = useCallback(async () => {
     try {
-      const result = await invoke<PeerStatus[]>("get_peers");
+      const result = await safeInvoke<PeerStatus[]>("get_peers");
       setPeers(result);
     } catch (e) {
       console.error("Failed to load peers:", e);
@@ -64,12 +63,12 @@ export function usePeers() {
   }, []);
 
   const connectPeer = useCallback(async (address: string, port: number) => {
-    await invoke("connect_peer", { address, port });
+    await safeInvoke("connect_peer", { address, port });
     await loadPeers();
   }, [loadPeers]);
 
   const disconnectPeer = useCallback(async (peerId: string) => {
-    await invoke("disconnect_peer", { peerId });
+    await safeInvoke("disconnect_peer", { peerId });
     await loadPeers();
   }, [loadPeers]);
 
@@ -94,7 +93,7 @@ export function useKvmStatus() {
 
   const loadStatus = useCallback(async () => {
     try {
-      const result = await invoke<KvmStatus>("get_kvm_status");
+      const result = await safeInvoke<KvmStatus>("get_kvm_status");
       setStatus(result);
     } catch (e) {
       console.error("Failed to load KVM status:", e);
@@ -102,12 +101,12 @@ export function useKvmStatus() {
   }, []);
 
   const startKvm = useCallback(async () => {
-    await invoke("start_kvm");
+    await safeInvoke("start_kvm");
     await loadStatus();
   }, [loadStatus]);
 
   const stopKvm = useCallback(async () => {
-    await invoke("stop_kvm");
+    await safeInvoke("stop_kvm");
     await loadStatus();
   }, [loadStatus]);
 
@@ -121,13 +120,17 @@ export function useKvmStatus() {
 
   // Listen for backend events
   useEffect(() => {
-    let unlisten: UnlistenFn | undefined;
+    let unlisten: (() => void) | undefined;
 
-    listen<boolean>("kvm-status-changed", (event) => {
-      setStatus((prev) => ({ ...prev, active: event.payload }));
-    }).then((fn) => {
-      unlisten = fn;
-    });
+    if (isTauri()) {
+      import("@tauri-apps/api/event").then(({ listen }) => {
+        listen<boolean>("kvm-status-changed", (event) => {
+          setStatus((prev) => ({ ...prev, active: event.payload }));
+        }).then((fn) => {
+          unlisten = fn;
+        });
+      });
+    }
 
     // Poll status periodically
     loadStatus();
@@ -146,7 +149,7 @@ export function useKvmStatus() {
 
 export function useScreenLayout() {
   const updateLayout = useCallback(async (layout: ScreenLayoutUpdate) => {
-    await invoke("update_screen_layout", { layout });
+    await safeInvoke("update_screen_layout", { layout });
   }, []);
 
   return { updateLayout };
