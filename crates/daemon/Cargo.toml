@@ -1,0 +1,31 @@
+[package]
+name = "s-kvm-daemon"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "s-kvm-daemon"
+path = "src/main.rs"
+
+[dependencies]
+s-kvm-core = { workspace = true }
+s-kvm-config = { workspace = true }
+s-kvm-input = { workspace = true }
+s-kvm-network = { workspace = true }
+s-kvm-video = { workspace = true }
+s-kvm-audio = { workspace = true }
+s-kvm-fido2 = { workspace = true }
+s-kvm-scripting = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+futures = { workspace = true }
+
+[dev-dependencies]
+mockall = { workspace = true }
+tokio = { workspace = true }

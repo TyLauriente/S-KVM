@@ -1,0 +1,77 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/core",
+    "crates/config",
+    "crates/input",
+    "crates/network",
+    "crates/video",
+    "crates/audio",
+    "crates/fido2",
+    "crates/scripting",
+    "crates/daemon",
+    "src-tauri",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+authors = ["S-KVM Contributors"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/s-kvm/s-kvm"
+
+[workspace.dependencies]
+# Core
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+bincode = "1"
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+# Async
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["full"] }
+futures = "0.3"
+async-trait = "0.1"
+
+# Networking
+quinn = "0.11"
+rustls = { version = "0.23", features = ["ring"] }
+rcgen = "0.14"
+mdns-sd = "0.13"
+
+# Input
+evdev = { version = "0.12", features = ["tokio"] }
+
+# Video
+ffmpeg-next = "7"
+wgpu = "25"
+
+# Audio
+cpal = "0.16"
+opus = "0.3"
+
+# FIDO2
+uhid-virt = "0.0.8"
+
+# Scripting
+rhai = "1.24"
+
+# Testing
+mockall = "0.13"
+proptest = "1"
+
+# Internal crates
+s-kvm-core = { path = "crates/core" }
+s-kvm-config = { path = "crates/config" }
+s-kvm-input = { path = "crates/input" }
+s-kvm-network = { path = "crates/network" }
+s-kvm-video = { path = "crates/video" }
+s-kvm-audio = { path = "crates/audio" }
+s-kvm-fido2 = { path = "crates/fido2" }
+s-kvm-scripting = { path = "crates/scripting" }
+s-kvm-daemon = { path = "crates/daemon" }

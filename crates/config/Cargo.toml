@@ -1,0 +1,15 @@
+[package]
+name = "s-kvm-config"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+s-kvm-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+tracing = { workspace = true }
+directories = "6"
+toml = "0.8"
+hostname = "0.4"

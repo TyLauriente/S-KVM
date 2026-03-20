@@ -2,5 +2,26 @@
 .claude/
 .claude-session/
 CLAUDE.md
-
 .mcp.json
+
+# Build artifacts
+/target
+/dist
+/node_modules
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Playwright MCP
+.playwright-mcp/
+
+# Env
+.env
+.env.local
