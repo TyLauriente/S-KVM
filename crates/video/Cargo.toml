@@ -3,6 +3,10 @@ name = "s-kvm-video"
 version.workspace = true
 edition.workspace = true
 
+[features]
+default = []
+ffmpeg = ["dep:ffmpeg-next"]
+
 [dependencies]
 s-kvm-core = { workspace = true }
 tokio = { workspace = true }
@@ -13,6 +17,7 @@ async-trait = { workspace = true }
 serde = { workspace = true }
 bincode = { workspace = true }
 futures = { workspace = true }
+ffmpeg-next = { workspace = true, optional = true }
 
 [dev-dependencies]
 mockall = { workspace = true }
