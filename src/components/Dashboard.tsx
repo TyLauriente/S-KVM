@@ -5,7 +5,10 @@ function Dashboard() {
   const { peers } = usePeers();
 
   const connectedPeers = peers.filter(
-    (p) => p.state === "Connected" || p.state === "Active" || p.state === "Authenticated"
+    (p) =>
+      p.state === "Connected" ||
+      p.state === "Active" ||
+      p.state === "Authenticated",
   );
 
   const formatUptime = (seconds: number): string => {
@@ -23,8 +26,8 @@ function Dashboard() {
         <h2 className="section-title">Dashboard</h2>
       </div>
 
-      {/* KVM Status Card */}
       <div className="dashboard-grid">
+        {/* KVM Status Card */}
         <div className="status-card card">
           <div className="status-card-header">
             <h3>KVM Status</h3>
@@ -36,23 +39,35 @@ function Dashboard() {
             </button>
           </div>
           <div className="status-indicator-large">
-            <div className={`status-ring ${status.active ? "active" : "inactive"}`}>
-              <span className={`status-dot-large ${status.active ? "active" : "inactive"}`} />
+            <div
+              className={`status-ring ${status.active ? "active" : "inactive"}`}
+            >
+              <span
+                className={`status-dot-large ${status.active ? "active" : "inactive"}`}
+              />
             </div>
-            <span className="status-label">{status.active ? "Active" : "Inactive"}</span>
+            <span className="dash-status-label">
+              {status.active ? "Active" : "Inactive"}
+            </span>
           </div>
           <div className="status-details">
-            <div className="stat">
-              <span className="stat-value">{formatUptime(status.uptime_seconds)}</span>
-              <span className="stat-label">Uptime</span>
+            <div className="dash-stat">
+              <span className="dash-stat-value">
+                {formatUptime(status.uptime_seconds)}
+              </span>
+              <span className="dash-stat-label">Uptime</span>
             </div>
-            <div className="stat">
-              <span className="stat-value">{status.connected_peers}</span>
-              <span className="stat-label">Peers</span>
+            <div className="dash-stat">
+              <span className="dash-stat-value">
+                {status.connected_peers}
+              </span>
+              <span className="dash-stat-label">Peers</span>
             </div>
-            <div className="stat">
-              <span className="stat-value">{status.active_peer ?? "Local"}</span>
-              <span className="stat-label">Active Screen</span>
+            <div className="dash-stat">
+              <span className="dash-stat-value">
+                {status.active_peer ?? "Local"}
+              </span>
+              <span className="dash-stat-label">Active Screen</span>
             </div>
           </div>
         </div>
@@ -62,21 +77,23 @@ function Dashboard() {
           <h3>Quick Actions</h3>
           <div className="quick-actions">
             <button className="action-btn" onClick={toggleKvm}>
-              <span className="action-icon">{status.active ? "⏸" : "▶"}</span>
+              <span className="action-icon">
+                {status.active ? "\u23F8" : "\u25B6"}
+              </span>
               <span>{status.active ? "Pause KVM" : "Start KVM"}</span>
             </button>
             {connectedPeers.map((peer) => (
-              <button key={peer.id} className="action-btn">
-                <span className="action-icon">🖥</span>
-                <span>Switch to {peer.hostname}</span>
+              <button key={peer.info.id} className="action-btn">
+                <span className="action-icon">{"\uD83D\uDDA5"}</span>
+                <span>Switch to {peer.info.hostname}</span>
               </button>
             ))}
             <button className="action-btn">
-              <span className="action-icon">🔒</span>
+              <span className="action-icon">{"\uD83D\uDD12"}</span>
               <span>Lock to Screen</span>
             </button>
             <button className="action-btn">
-              <span className="action-icon">📋</span>
+              <span className="action-icon">{"\uD83D\uDCCB"}</span>
               <span>Sync Clipboard</span>
             </button>
           </div>
@@ -87,17 +104,22 @@ function Dashboard() {
           <h3>Connected Peers</h3>
           {connectedPeers.length === 0 ? (
             <div className="empty-mini">
-              <p>No peers connected. Peers will appear here when discovered via mDNS or connected manually.</p>
+              <p>
+                No peers connected. Peers will appear here when discovered via
+                mDNS or connected manually.
+              </p>
             </div>
           ) : (
             <div className="peer-list-compact">
               {connectedPeers.map((peer) => (
-                <div key={peer.id} className="peer-row">
+                <div key={peer.info.id} className="peer-row">
                   <span className="peer-dot active" />
-                  <span className="peer-name">{peer.hostname}</span>
-                  <span className="peer-os-badge">{peer.os}</span>
-                  {peer.latency_ms && (
-                    <span className="peer-latency">{peer.latency_ms.toFixed(1)}ms</span>
+                  <span className="peer-name">{peer.info.hostname}</span>
+                  <span className="peer-os-badge">{peer.info.os}</span>
+                  {peer.latency_ms != null && (
+                    <span className="peer-latency">
+                      {peer.latency_ms.toFixed(1)}ms
+                    </span>
                   )}
                 </div>
               ))}
@@ -138,39 +160,33 @@ function Dashboard() {
           height: 100%;
           overflow-y: auto;
         }
-
         .dashboard-grid {
           display: grid;
           grid-template-columns: repeat(2, 1fr);
           gap: 16px;
         }
-
         .status-card, .actions-card, .peers-card, .info-card {
           display: flex;
           flex-direction: column;
           gap: 16px;
         }
-
         .status-card h3, .actions-card h3, .peers-card h3, .info-card h3 {
           font-size: 14px;
           color: var(--text-secondary);
           text-transform: uppercase;
           letter-spacing: 0.5px;
         }
-
         .status-card-header {
           display: flex;
           justify-content: space-between;
           align-items: center;
         }
-
         .status-indicator-large {
           display: flex;
           align-items: center;
           gap: 16px;
           padding: 12px 0;
         }
-
         .status-ring {
           width: 48px;
           height: 48px;
@@ -180,71 +196,58 @@ function Dashboard() {
           justify-content: center;
           transition: all 0.3s ease;
         }
-
         .status-ring.active {
           background: rgba(34, 197, 94, 0.1);
           box-shadow: 0 0 20px rgba(34, 197, 94, 0.2);
         }
-
         .status-ring.inactive {
           background: rgba(102, 102, 119, 0.1);
         }
-
         .status-dot-large {
           width: 20px;
           height: 20px;
           border-radius: 50%;
         }
-
         .status-dot-large.active {
           background: var(--success);
           box-shadow: 0 0 12px rgba(34, 197, 94, 0.6);
-          animation: pulse 2s ease-in-out infinite;
+          animation: dash-pulse 2s ease-in-out infinite;
         }
-
         .status-dot-large.inactive {
           background: var(--text-muted);
         }
-
-        @keyframes pulse {
+        @keyframes dash-pulse {
           0%, 100% { opacity: 1; }
           50% { opacity: 0.6; }
         }
-
-        .status-label {
+        .dash-status-label {
           font-size: 24px;
           font-weight: 600;
         }
-
         .status-details {
           display: flex;
           gap: 24px;
         }
-
-        .stat {
+        .dash-stat {
           display: flex;
           flex-direction: column;
           gap: 2px;
         }
-
-        .stat-value {
+        .dash-stat-value {
           font-size: 18px;
           font-weight: 600;
           color: var(--text-primary);
         }
-
-        .stat-label {
+        .dash-stat-label {
           font-size: 11px;
           color: var(--text-muted);
           text-transform: uppercase;
         }
-
         .quick-actions {
           display: grid;
           grid-template-columns: 1fr 1fr;
           gap: 8px;
         }
-
         .action-btn {
           display: flex;
           align-items: center;
@@ -256,32 +259,26 @@ function Dashboard() {
           font-size: 13px;
           text-align: left;
         }
-
         .action-btn:hover {
           background: var(--bg-hover);
         }
-
         .action-icon {
           font-size: 16px;
         }
-
         .empty-mini {
           padding: 20px;
           text-align: center;
         }
-
         .empty-mini p {
           color: var(--text-muted);
           font-size: 13px;
           line-height: 1.5;
         }
-
         .peer-list-compact {
           display: flex;
           flex-direction: column;
           gap: 8px;
         }
-
         .peer-row {
           display: flex;
           align-items: center;
@@ -290,24 +287,20 @@ function Dashboard() {
           background: var(--bg-tertiary);
           border-radius: var(--radius-sm);
         }
-
         .peer-dot {
           width: 8px;
           height: 8px;
           border-radius: 50%;
           flex-shrink: 0;
         }
-
         .peer-dot.active {
           background: var(--success);
         }
-
         .peer-name {
           flex: 1;
           font-size: 14px;
           font-weight: 500;
         }
-
         .peer-os-badge {
           font-size: 11px;
           color: var(--text-muted);
@@ -315,18 +308,15 @@ function Dashboard() {
           padding: 2px 6px;
           border-radius: 3px;
         }
-
         .peer-latency {
           font-size: 12px;
           color: var(--text-secondary);
         }
-
         .info-rows {
           display: flex;
           flex-direction: column;
           gap: 4px;
         }
-
         .info-row {
           display: flex;
           justify-content: space-between;
@@ -334,16 +324,13 @@ function Dashboard() {
           padding: 6px 0;
           border-bottom: 1px solid var(--border);
         }
-
         .info-row:last-child {
           border-bottom: none;
         }
-
         .info-label {
           font-size: 13px;
           color: var(--text-muted);
         }
-
         .info-value {
           font-size: 13px;
           color: var(--text-primary);
