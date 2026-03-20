@@ -26,11 +26,11 @@ pub struct QuicTransport {
 pub struct PeerConnection {
     connection: Connection,
     /// Send stream for control messages (Stream 0).
-    control_tx: Option<SendStream>,
+    _control_tx: Option<SendStream>,
     /// Send stream for input events (Stream 1).
-    input_tx: Option<SendStream>,
+    _input_tx: Option<SendStream>,
     /// Send stream for data (clipboard, FIDO2) (Stream 2).
-    data_tx: Option<SendStream>,
+    _data_tx: Option<SendStream>,
 }
 
 impl QuicTransport {
@@ -79,9 +79,9 @@ impl QuicTransport {
 
         Ok(PeerConnection {
             connection,
-            control_tx: None,
-            input_tx: None,
-            data_tx: None,
+            _control_tx: None,
+            _input_tx: None,
+            _data_tx: None,
         })
     }
 
@@ -104,9 +104,9 @@ impl QuicTransport {
 
         Ok(PeerConnection {
             connection,
-            control_tx: None,
-            input_tx: None,
-            data_tx: None,
+            _control_tx: None,
+            _input_tx: None,
+            _data_tx: None,
         })
     }
 

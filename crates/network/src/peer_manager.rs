@@ -6,7 +6,7 @@ use std::time::Instant;
 
 use s_kvm_core::protocol::*;
 use s_kvm_core::*;
-use tokio::sync::{mpsc, watch};
+use tokio::sync::mpsc;
 
 use crate::quic::{PeerConnection, QuicTransport};
 
@@ -33,20 +33,17 @@ pub struct PeerManager {
     local_info: PeerInfo,
     peers: HashMap<String, ManagedPeer>,
     event_tx: mpsc::Sender<PeerManagerEvent>,
-    focus_tx: watch::Sender<FocusState>,
 }
 
 impl PeerManager {
     pub fn new(
         local_info: PeerInfo,
         event_tx: mpsc::Sender<PeerManagerEvent>,
-        focus_tx: watch::Sender<FocusState>,
     ) -> Self {
         Self {
             local_info,
             peers: HashMap::new(),
             event_tx,
-            focus_tx,
         }
     }
 
@@ -176,6 +173,21 @@ impl PeerManager {
                 .send(PeerManagerEvent::PeerDisconnected(peer.info.id))
                 .await;
             tracing::info!(peer = %peer.info.hostname, "Peer disconnected");
+        }
+    }
+
+    /// Send a message to all connected peers.
+    pub async fn send_to_focused(&self, msg: &ProtocolMessage) {
+        for peer in self.peers.values() {
+            if peer.connection.is_connected() {
+                if let Err(e) = peer.connection.send_reliable(msg).await {
+                    tracing::debug!(
+                        peer = %peer.info.hostname,
+                        "Failed to send to peer: {}",
+                        e
+                    );
+                }
+            }
         }
     }
 

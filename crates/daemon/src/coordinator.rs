@@ -1,10 +1,13 @@
 //! Central coordinator that manages all daemon subsystem actors.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
 use anyhow::Result;
 use s_kvm_config::AppConfig;
 use s_kvm_core::protocol::{ControlMessage, DataMessage, InputMessage};
 use s_kvm_core::{ConnectionState, FocusState, PeerId, PeerInfo};
-use tokio::sync::{broadcast, mpsc, watch};
+use tokio::sync::{broadcast, mpsc, watch, Mutex};
 use tokio_util::sync::CancellationToken;
 
 use crate::actors::clipboard_actor::ClipboardActor;
@@ -72,6 +75,35 @@ pub struct PeerStatusInfo {
     pub latency_ms: Option<f64>,
 }
 
+/// Shared daemon state accessible by both the coordinator and IPC handlers.
+#[derive(Clone)]
+pub struct DaemonState {
+    pub peers: Arc<Mutex<Vec<PeerStatusInfo>>>,
+    pub kvm_active: Arc<AtomicBool>,
+    pub start_time: std::time::Instant,
+}
+
+impl DaemonState {
+    pub fn new() -> Self {
+        Self {
+            peers: Arc::new(Mutex::new(Vec::new())),
+            kvm_active: Arc::new(AtomicBool::new(false)),
+            start_time: std::time::Instant::now(),
+        }
+    }
+}
+
+/// Commands sent from the coordinator to the network actor.
+#[derive(Debug)]
+pub enum NetworkCommand {
+    /// Send input to the currently focused peer.
+    SendInput(InputMessage),
+    /// Connect to a peer at the given address.
+    ConnectPeer { address: String, port: u16 },
+    /// Disconnect a peer by ID string.
+    DisconnectPeer(String),
+}
+
 /// The coordinator manages all subsystem actors and routes messages between them.
 pub struct Coordinator {
     config: AppConfig,
@@ -98,16 +130,26 @@ impl Coordinator {
         // Broadcast channel for events that multiple actors need
         let (broadcast_tx, _) = broadcast::channel::<CoordinatorEvent>(256);
 
+        // Channel for sending commands to the network actor
+        let (network_cmd_tx, network_cmd_rx) = mpsc::channel::<NetworkCommand>(64);
+
+        // Shared daemon state for IPC queries
+        let daemon_state = DaemonState::new();
+
         // Start IPC server for GUI communication
         let ipc_event_tx = event_tx.clone();
         let ipc_config = self.config.clone();
         let ipc_shutdown = self.shutdown.clone();
         let ipc_kvm_active_rx = kvm_active_rx.clone();
+        let ipc_daemon_state = daemon_state.clone();
+        let ipc_network_cmd_tx = network_cmd_tx.clone();
         let ipc_handle = tokio::spawn(async move {
             if let Err(e) = ipc::start_ipc_server(
                 ipc_config,
                 ipc_event_tx,
                 ipc_kvm_active_rx,
+                ipc_daemon_state,
+                ipc_network_cmd_tx,
                 ipc_shutdown,
             )
             .await
@@ -170,6 +212,7 @@ impl Coordinator {
             cert_path,
             key_path,
             focus_tx.clone(),
+            network_cmd_rx,
             self.shutdown.clone(),
         );
         let network_handle = tokio::spawn(async move {
@@ -188,10 +231,24 @@ impl Coordinator {
                     match &event {
                         CoordinatorEvent::PeerConnected(info) => {
                             tracing::info!(peer = %info.id, hostname = %info.hostname, "Peer connected");
+                            {
+                                let mut peers = daemon_state.peers.lock().await;
+                                peers.push(PeerStatusInfo {
+                                    id: info.id.to_string(),
+                                    hostname: info.hostname.clone(),
+                                    os: format!("{:?}", info.os),
+                                    state: ConnectionState::Active,
+                                    latency_ms: None,
+                                });
+                            }
                             let _ = broadcast_tx.send(event);
                         }
                         CoordinatorEvent::PeerDisconnected(id) => {
                             tracing::info!(peer = %id, "Peer disconnected");
+                            {
+                                let mut peers = daemon_state.peers.lock().await;
+                                peers.retain(|p| p.id != id.to_string());
+                            }
                             let _ = broadcast_tx.send(event);
                         }
                         CoordinatorEvent::FocusChanged(focus) => {
@@ -201,11 +258,11 @@ impl Coordinator {
                         }
                         CoordinatorEvent::KvmToggled(active) => {
                             tracing::info!(active = active, "KVM toggled");
+                            daemon_state.kvm_active.store(*active, Ordering::Relaxed);
                             let _ = kvm_active_tx.send(*active);
                         }
                         CoordinatorEvent::IncomingInput(msg) => {
                             tracing::trace!("Incoming input event");
-                            // Route to input injector
                             match msg {
                                 InputMessage::Event(input_event) => {
                                     let _ = inject_tx.send(input_event.clone()).await;
@@ -217,10 +274,11 @@ impl Coordinator {
                                 }
                             }
                         }
-                        CoordinatorEvent::OutgoingInput(_msg) => {
+                        CoordinatorEvent::OutgoingInput(msg) => {
                             tracing::trace!("Outgoing input event");
-                            // Network actor handles outgoing via PeerManager
-                            // TODO: Route to network layer for forwarding to focused peer
+                            let _ = network_cmd_tx
+                                .send(NetworkCommand::SendInput(msg.clone()))
+                                .await;
                         }
                         CoordinatorEvent::ControlReceived(peer_id, msg) => {
                             tracing::debug!(peer = %peer_id, "Control message received");
@@ -229,20 +287,28 @@ impl Coordinator {
                                     // Latency tracking handled by PeerManager
                                 }
                                 ControlMessage::ScreenEnter { display_id, x, y, .. } => {
-                                    let _ = focus_tx.send(FocusState {
+                                    let focus = FocusState {
                                         active_peer: *peer_id,
                                         active_display: *display_id,
                                         cursor_x: *x,
                                         cursor_y: *y,
-                                    });
+                                    };
+                                    let _ = focus_tx.send(focus.clone());
+                                    let _ = event_tx
+                                        .send(CoordinatorEvent::FocusChanged(focus))
+                                        .await;
                                 }
                                 ControlMessage::ScreenLeave { .. } => {
-                                    let _ = focus_tx.send(FocusState {
+                                    let focus = FocusState {
                                         active_peer: self.config.peer_id,
                                         active_display: 0,
                                         cursor_x: 0,
                                         cursor_y: 0,
-                                    });
+                                    };
+                                    let _ = focus_tx.send(focus.clone());
+                                    let _ = event_tx
+                                        .send(CoordinatorEvent::FocusChanged(focus))
+                                        .await;
                                 }
                                 _ => {}
                             }
@@ -251,7 +317,6 @@ impl Coordinator {
                             match msg {
                                 DataMessage::ClipboardUpdate { .. } => {
                                     tracing::debug!(peer = %peer_id, "Clipboard update received");
-                                    // Route to clipboard actor for application
                                     if *peer_id != self.config.peer_id {
                                         let _ = clipboard_incoming_tx.send(msg.clone()).await;
                                     }

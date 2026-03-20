@@ -2,12 +2,16 @@
 //!
 //! Uses Unix domain sockets on Linux and named pipes on Windows.
 
+use std::sync::atomic::Ordering;
+
 use anyhow::Result;
 use s_kvm_config::AppConfig;
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
-use crate::coordinator::{CoordinatorEvent, IpcCommand, IpcResponse};
+use crate::coordinator::{
+    CoordinatorEvent, DaemonState, IpcCommand, IpcResponse, NetworkCommand,
+};
 
 /// Get the IPC socket path (Unix only).
 #[cfg(unix)]
@@ -28,15 +32,33 @@ pub async fn start_ipc_server(
     config: AppConfig,
     event_tx: mpsc::Sender<CoordinatorEvent>,
     kvm_active_rx: watch::Receiver<bool>,
+    daemon_state: DaemonState,
+    network_cmd_tx: mpsc::Sender<NetworkCommand>,
     shutdown: CancellationToken,
 ) -> Result<()> {
     #[cfg(unix)]
     {
-        start_ipc_server_unix(config, event_tx, kvm_active_rx, shutdown).await
+        start_ipc_server_unix(
+            config,
+            event_tx,
+            kvm_active_rx,
+            daemon_state,
+            network_cmd_tx,
+            shutdown,
+        )
+        .await
     }
     #[cfg(windows)]
     {
-        start_ipc_server_windows(config, event_tx, kvm_active_rx, shutdown).await
+        start_ipc_server_windows(
+            config,
+            event_tx,
+            kvm_active_rx,
+            daemon_state,
+            network_cmd_tx,
+            shutdown,
+        )
+        .await
     }
 }
 
@@ -46,6 +68,8 @@ async fn start_ipc_server_unix(
     config: AppConfig,
     event_tx: mpsc::Sender<CoordinatorEvent>,
     kvm_active_rx: watch::Receiver<bool>,
+    daemon_state: DaemonState,
+    network_cmd_tx: mpsc::Sender<NetworkCommand>,
     shutdown: CancellationToken,
 ) -> Result<()> {
     let path = socket_path();
@@ -67,10 +91,18 @@ async fn start_ipc_server_unix(
                         let config = config.clone();
                         let event_tx = event_tx.clone();
                         let kvm_active_rx = kvm_active_rx.clone();
+                        let daemon_state = daemon_state.clone();
+                        let network_cmd_tx = network_cmd_tx.clone();
                         let (reader, writer) = stream.into_split();
                         tokio::spawn(async move {
                             if let Err(e) = handle_ipc_connection(
-                                reader, writer, config, event_tx, kvm_active_rx,
+                                reader,
+                                writer,
+                                config,
+                                event_tx,
+                                kvm_active_rx,
+                                daemon_state,
+                                network_cmd_tx,
                             ).await {
                                 tracing::error!("IPC connection error: {}", e);
                             }
@@ -100,6 +132,8 @@ async fn start_ipc_server_windows(
     config: AppConfig,
     event_tx: mpsc::Sender<CoordinatorEvent>,
     kvm_active_rx: watch::Receiver<bool>,
+    daemon_state: DaemonState,
+    network_cmd_tx: mpsc::Sender<NetworkCommand>,
     shutdown: CancellationToken,
 ) -> Result<()> {
     use tokio::net::windows::named_pipe::ServerOptions;
@@ -122,10 +156,18 @@ async fn start_ipc_server_windows(
                         let config = config.clone();
                         let event_tx = event_tx.clone();
                         let kvm_active_rx = kvm_active_rx.clone();
+                        let daemon_state = daemon_state.clone();
+                        let network_cmd_tx = network_cmd_tx.clone();
                         let (reader, writer) = tokio::io::split(connected);
                         tokio::spawn(async move {
                             if let Err(e) = handle_ipc_connection(
-                                reader, writer, config, event_tx, kvm_active_rx,
+                                reader,
+                                writer,
+                                config,
+                                event_tx,
+                                kvm_active_rx,
+                                daemon_state,
+                                network_cmd_tx,
                             ).await {
                                 tracing::error!("IPC connection error: {}", e);
                             }
@@ -152,7 +194,9 @@ async fn handle_ipc_connection<R, W>(
     mut writer: W,
     config: AppConfig,
     event_tx: mpsc::Sender<CoordinatorEvent>,
-    kvm_active_rx: watch::Receiver<bool>,
+    _kvm_active_rx: watch::Receiver<bool>,
+    daemon_state: DaemonState,
+    network_cmd_tx: mpsc::Sender<NetworkCommand>,
 ) -> Result<()>
 where
     R: tokio::io::AsyncRead + Unpin,
@@ -182,11 +226,13 @@ where
 
         let response = match command {
             IpcCommand::GetStatus => {
-                let active = *kvm_active_rx.borrow();
+                let active = daemon_state.kvm_active.load(Ordering::Relaxed);
+                let peers = daemon_state.peers.lock().await;
+                let uptime = daemon_state.start_time.elapsed().as_secs();
                 IpcResponse::Status {
                     active,
-                    connected_peers: 0, // TODO: query from peer manager
-                    uptime_seconds: 0,  // TODO: track uptime
+                    connected_peers: peers.len(),
+                    uptime_seconds: uptime,
                 }
             }
             IpcCommand::GetConfig => IpcResponse::Config(config.clone()),
@@ -212,17 +258,21 @@ where
                 IpcResponse::Ok
             }
             IpcCommand::GetPeers => {
-                // TODO: Query actual peers from peer manager
-                IpcResponse::Peers(vec![])
+                let peers = daemon_state.peers.lock().await;
+                IpcResponse::Peers(peers.clone())
             }
             IpcCommand::ConnectPeer { address, port } => {
                 tracing::info!("IPC: Connect to peer {}:{}", address, port);
-                // TODO: Initiate connection via network actor
+                let _ = network_cmd_tx
+                    .send(NetworkCommand::ConnectPeer { address, port })
+                    .await;
                 IpcResponse::Ok
             }
             IpcCommand::DisconnectPeer(peer_id) => {
                 tracing::info!("IPC: Disconnect peer {}", peer_id);
-                // TODO: Disconnect via network actor
+                let _ = network_cmd_tx
+                    .send(NetworkCommand::DisconnectPeer(peer_id))
+                    .await;
                 IpcResponse::Ok
             }
             IpcCommand::UpdateScreenLayout(links) => {

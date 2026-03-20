@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use s_kvm_core::protocol::ProtocolMessage;
-use s_kvm_core::{FocusState, PeerId, PeerCapabilities, PeerInfo};
+use s_kvm_core::{FocusState, PeerCapabilities, PeerId, PeerInfo};
 use s_kvm_network::discovery::{DiscoveryEvent, DiscoveryService};
 use s_kvm_network::peer_manager::{PeerManager, PeerManagerEvent};
 use s_kvm_network::quic::QuicTransport;
@@ -14,7 +14,7 @@ use s_kvm_network::tls;
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
-use crate::coordinator::CoordinatorEvent;
+use crate::coordinator::{CoordinatorEvent, NetworkCommand};
 
 /// The network actor manages all networking functionality.
 pub struct NetworkActor {
@@ -32,8 +32,10 @@ pub struct NetworkActor {
     cert_path: PathBuf,
     /// TLS key path.
     key_path: PathBuf,
-    /// Focus watch sender (passed to PeerManager).
-    focus_tx: watch::Sender<FocusState>,
+    /// Focus watch sender (reserved for future use).
+    _focus_tx: watch::Sender<FocusState>,
+    /// Receiver for commands from the coordinator.
+    cmd_rx: mpsc::Receiver<NetworkCommand>,
     /// Cancellation token.
     shutdown: CancellationToken,
 }
@@ -48,6 +50,7 @@ impl NetworkActor {
         cert_path: PathBuf,
         key_path: PathBuf,
         focus_tx: watch::Sender<FocusState>,
+        cmd_rx: mpsc::Receiver<NetworkCommand>,
         shutdown: CancellationToken,
     ) -> Self {
         Self {
@@ -58,12 +61,13 @@ impl NetworkActor {
             mdns_enabled,
             cert_path,
             key_path,
-            focus_tx,
+            _focus_tx: focus_tx,
+            cmd_rx,
             shutdown,
         }
     }
 
-    pub async fn run(self) -> anyhow::Result<()> {
+    pub async fn run(mut self) -> anyhow::Result<()> {
         tracing::info!(
             port = self.listen_port,
             mdns = self.mdns_enabled,
@@ -99,7 +103,7 @@ impl NetworkActor {
 
         // Create PeerManager event channel
         let (pm_event_tx, mut pm_event_rx) = mpsc::channel::<PeerManagerEvent>(64);
-        let mut peer_manager = PeerManager::new(local_info, pm_event_tx, self.focus_tx);
+        let mut peer_manager = PeerManager::new(local_info, pm_event_tx);
 
         // Accept incoming connections via channel
         let (incoming_tx, mut incoming_rx) = mpsc::channel(16);
@@ -169,6 +173,32 @@ impl NetworkActor {
                     tracing::info!(remote = %remote, "Handling incoming connection");
                     if let Err(e) = peer_manager.handle_incoming(conn).await {
                         tracing::warn!(remote = %remote, "Incoming handshake failed: {}", e);
+                    }
+                }
+
+                // Commands from coordinator
+                Some(cmd) = self.cmd_rx.recv() => {
+                    match cmd {
+                        NetworkCommand::SendInput(msg) => {
+                            let proto_msg = ProtocolMessage::Input(msg);
+                            peer_manager.send_to_focused(&proto_msg).await;
+                        }
+                        NetworkCommand::ConnectPeer { address, port } => {
+                            let addr_str = format!("{}:{}", address, port);
+                            match addr_str.parse::<SocketAddr>() {
+                                Ok(addr) => {
+                                    if let Err(e) = peer_manager.connect_to(&transport, addr).await {
+                                        tracing::warn!("Failed to connect to {}: {}", addr_str, e);
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::warn!("Invalid peer address {}: {}", addr_str, e);
+                                }
+                            }
+                        }
+                        NetworkCommand::DisconnectPeer(peer_id) => {
+                            peer_manager.disconnect(&peer_id).await;
+                        }
                     }
                 }
 
