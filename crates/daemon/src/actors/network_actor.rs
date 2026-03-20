@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use s_kvm_core::protocol::{ControlMessage, DataMessage, InputMessage, ProtocolMessage};
+use s_kvm_core::protocol::ProtocolMessage;
 use s_kvm_core::{FocusState, PeerId, PeerCapabilities, PeerInfo};
 use s_kvm_network::discovery::{DiscoveryEvent, DiscoveryService};
 use s_kvm_network::peer_manager::{PeerManager, PeerManagerEvent};

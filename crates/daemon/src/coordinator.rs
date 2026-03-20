@@ -3,7 +3,7 @@
 use anyhow::Result;
 use s_kvm_config::AppConfig;
 use s_kvm_core::protocol::{ControlMessage, DataMessage, InputMessage};
-use s_kvm_core::{ConnectionState, FocusState, InputEvent, PeerId, PeerInfo};
+use s_kvm_core::{ConnectionState, FocusState, PeerId, PeerInfo};
 use tokio::sync::{broadcast, mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
@@ -249,7 +249,7 @@ impl Coordinator {
                         }
                         CoordinatorEvent::DataReceived(peer_id, msg) => {
                             match msg {
-                                DataMessage::ClipboardUpdate { content_type, data } => {
+                                DataMessage::ClipboardUpdate { .. } => {
                                     tracing::debug!(peer = %peer_id, "Clipboard update received");
                                     // Route to clipboard actor for application
                                     if *peer_id != self.config.peer_id {

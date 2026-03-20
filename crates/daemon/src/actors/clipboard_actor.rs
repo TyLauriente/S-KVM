@@ -1,7 +1,7 @@
 //! Clipboard actor — monitors clipboard changes and syncs with peers.
 
 use s_kvm_core::clipboard::{ClipboardManager, ClipboardSyncMode};
-use s_kvm_core::protocol::{ClipboardContentType, DataMessage};
+use s_kvm_core::protocol::DataMessage;
 use s_kvm_core::PeerId;
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
