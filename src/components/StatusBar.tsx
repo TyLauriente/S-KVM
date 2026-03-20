@@ -1,8 +1,9 @@
 interface StatusBarProps {
   kvmActive: boolean;
+  connectedPeers?: number;
 }
 
-function StatusBar({ kvmActive }: StatusBarProps) {
+function StatusBar({ kvmActive, connectedPeers = 0 }: StatusBarProps) {
   return (
     <div className="status-bar">
       <div className="status-left">
@@ -11,7 +12,7 @@ function StatusBar({ kvmActive }: StatusBarProps) {
           {kvmActive ? "Active" : "Inactive"}
         </span>
         <span className="status-divider">|</span>
-        <span className="status-text">0 peers connected</span>
+        <span className="status-text">{connectedPeers} peer{connectedPeers !== 1 ? "s" : ""} connected</span>
       </div>
       <div className="status-right">
         <span className="status-text">Latency: --</span>

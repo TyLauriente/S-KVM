@@ -1,12 +1,13 @@
 interface SidebarProps {
   currentView: string;
-  onViewChange: (view: "layout" | "peers" | "settings") => void;
+  onViewChange: (view: "dashboard" | "layout" | "peers" | "settings") => void;
   kvmActive: boolean;
   onToggleKvm: () => void;
 }
 
 function Sidebar({ currentView, onViewChange, kvmActive, onToggleKvm }: SidebarProps) {
   const navItems = [
+    { id: "dashboard" as const, label: "Dashboard", icon: "◉" },
     { id: "layout" as const, label: "Monitor Layout", icon: "⊞" },
     { id: "peers" as const, label: "Peers", icon: "⊕" },
     { id: "settings" as const, label: "Settings", icon: "⚙" },
