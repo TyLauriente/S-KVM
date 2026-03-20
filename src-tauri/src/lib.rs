@@ -1,4 +1,5 @@
 mod commands;
+mod state;
 
 use tauri::Manager;
 
@@ -13,13 +14,13 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            // Focus the main window if already running
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_focus();
             }
         }))
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .manage(state::AppState::new())
         .invoke_handler(tauri::generate_handler![
             commands::get_config,
             commands::save_config,
@@ -36,8 +37,56 @@ pub fn run() {
         .setup(|app| {
             tracing::info!("S-KVM application starting");
 
-            // Set up system tray
-            let _tray = app.tray_by_id("main");
+            // Initialize application state
+            let state = app.state::<state::AppState>();
+            let config = s_kvm_config::load_config()
+                .unwrap_or_else(|_| s_kvm_config::AppConfig::default());
+            *state.config.lock().unwrap() = config;
+
+            // Set up system tray menu
+            if let Some(tray) = app.tray_by_id("main") {
+                let menu = tauri::menu::MenuBuilder::new(app)
+                    .text("toggle", "Toggle KVM")
+                    .separator()
+                    .text("settings", "Settings")
+                    .separator()
+                    .text("quit", "Quit S-KVM")
+                    .build()?;
+                tray.set_menu(Some(menu))?;
+                tray.set_tooltip(Some("S-KVM - Software KVM Switch"))?;
+
+                let app_handle = app.handle().clone();
+                tray.on_menu_event(move |_app, event| {
+                    match event.id().as_ref() {
+                        "toggle" => {
+                            let state = app_handle.state::<state::AppState>();
+                            let mut active = state.kvm_active.lock().unwrap();
+                            *active = !*active;
+                            tracing::info!(active = *active, "KVM toggled via tray");
+                            let _ = app_handle.emit("kvm-status-changed", *active);
+                        }
+                        "settings" => {
+                            if let Some(window) = app_handle.get_webview_window("main") {
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                            }
+                        }
+                        "quit" => {
+                            tracing::info!("Quit requested via tray");
+                            app_handle.exit(0);
+                        }
+                        _ => {}
+                    }
+                });
+            }
+
+            // Emit initial status
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                // Small delay to ensure frontend is ready
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                let _ = handle.emit("kvm-status-changed", false);
+            });
 
             Ok(())
         })
