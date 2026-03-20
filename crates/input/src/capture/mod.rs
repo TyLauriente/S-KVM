@@ -3,11 +3,17 @@
 #[cfg(target_os = "linux")]
 pub mod linux;
 
+#[cfg(target_os = "windows")]
+pub mod windows;
+
 use async_trait::async_trait;
 use s_kvm_core::InputEvent;
 
 #[cfg(target_os = "linux")]
 pub use linux::LinuxInputCapture;
+
+#[cfg(target_os = "windows")]
+pub use windows::WindowsInputCapture;
 
 /// Trait for capturing input events from the local system.
 #[async_trait]
