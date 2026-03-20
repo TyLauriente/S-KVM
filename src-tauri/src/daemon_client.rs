@@ -52,7 +52,7 @@ pub struct PeerStatusInfo {
 
 /// Get the IPC socket path (Unix).
 #[cfg(unix)]
-fn socket_path() -> std::path::PathBuf {
+pub fn socket_path() -> std::path::PathBuf {
     let runtime_dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
     std::path::PathBuf::from(runtime_dir).join("s-kvm-daemon.sock")
 }

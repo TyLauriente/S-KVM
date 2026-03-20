@@ -59,20 +59,65 @@ pub fn run() {
                 }
             });
 
-            // Spawn reconnection task that retries every 5 seconds
+            // Spawn reconnection task with daemon respawn on crash
             let reconnect_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
+                let mut was_connected = false;
+                let mut respawn_backoff = std::time::Duration::from_secs(1);
+                let max_backoff = std::time::Duration::from_secs(30);
+
                 loop {
                     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
 
                     let state = reconnect_handle.state::<state::AppState>();
                     let is_connected = state.daemon_client.lock().await.is_some();
 
-                    if !is_connected {
+                    if is_connected {
+                        was_connected = true;
+                        respawn_backoff = std::time::Duration::from_secs(1);
+                    } else {
+                        // If daemon was previously connected, try to respawn it
+                        if was_connected {
+                            tracing::warn!(
+                                "Daemon connection lost, attempting respawn (backoff: {:?})",
+                                respawn_backoff
+                            );
+                            let daemon_binary = std::env::current_exe()
+                                .ok()
+                                .and_then(|p| p.parent().map(|dir| dir.join("s-kvm-daemon")));
+
+                            if let Some(daemon_path) = daemon_binary {
+                                if daemon_path.exists() {
+                                    match std::process::Command::new(&daemon_path)
+                                        .stdout(std::process::Stdio::null())
+                                        .stderr(std::process::Stdio::null())
+                                        .spawn()
+                                    {
+                                        Ok(_) => {
+                                            tracing::info!("Daemon respawned");
+                                            tokio::time::sleep(
+                                                std::time::Duration::from_millis(500),
+                                            )
+                                            .await;
+                                        }
+                                        Err(e) => {
+                                            tracing::warn!("Failed to respawn daemon: {}", e);
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Apply exponential backoff for next respawn attempt
+                            tokio::time::sleep(respawn_backoff).await;
+                            respawn_backoff = (respawn_backoff * 2).min(max_backoff);
+                        }
+
                         match daemon_client::DaemonClient::connect().await {
                             Ok(client) => {
                                 tracing::info!("Reconnected to S-KVM daemon");
                                 *state.daemon_client.lock().await = Some(client);
+                                was_connected = true;
+                                respawn_backoff = std::time::Duration::from_secs(1);
                             }
                             Err(_) => {
                                 tracing::trace!("Daemon still not available, will retry");
@@ -117,6 +162,44 @@ pub fn run() {
                         _ => {}
                     }
                 });
+            }
+
+            // Try to start daemon if not already running
+            let daemon_binary = std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|dir| dir.join("s-kvm-daemon")));
+
+            if let Some(daemon_path) = daemon_binary {
+                if daemon_path.exists() {
+                    let socket_exists = {
+                        #[cfg(unix)]
+                        {
+                            crate::daemon_client::socket_path().exists()
+                        }
+                        #[cfg(windows)]
+                        {
+                            true // Named pipes don't have filesystem presence to check
+                        }
+                    };
+
+                    if !socket_exists {
+                        tracing::info!("Starting daemon: {:?}", daemon_path);
+                        match std::process::Command::new(&daemon_path)
+                            .stdout(std::process::Stdio::null())
+                            .stderr(std::process::Stdio::null())
+                            .spawn()
+                        {
+                            Ok(_child) => {
+                                tracing::info!("Daemon spawned");
+                                // Give it time to start
+                                std::thread::sleep(std::time::Duration::from_millis(500));
+                            }
+                            Err(e) => {
+                                tracing::warn!("Failed to start daemon: {}", e);
+                            }
+                        }
+                    }
+                }
             }
 
             // Emit initial status
