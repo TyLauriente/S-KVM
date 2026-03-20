@@ -4381,6 +4381,7 @@ dependencies = [
  "s-kvm-config",
  "s-kvm-core",
  "serde",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tokio-util",
