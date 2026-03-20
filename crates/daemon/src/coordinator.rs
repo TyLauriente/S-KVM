@@ -3,10 +3,13 @@
 use anyhow::Result;
 use s_kvm_config::AppConfig;
 use s_kvm_core::protocol::{ControlMessage, DataMessage, InputMessage};
-use s_kvm_core::{ConnectionState, FocusState, PeerId, PeerInfo};
+use s_kvm_core::{ConnectionState, FocusState, InputEvent, PeerId, PeerInfo};
 use tokio::sync::{broadcast, mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
+use crate::actors::clipboard_actor::ClipboardActor;
+use crate::actors::input_actor::InputActor;
+use crate::actors::network_actor::NetworkActor;
 use crate::ipc;
 
 /// Central message types routed between actors.
@@ -84,7 +87,7 @@ impl Coordinator {
         // Create communication channels between actors
         let (event_tx, mut event_rx) = mpsc::channel::<CoordinatorEvent>(256);
         let (config_tx, _config_rx) = watch::channel(self.config.clone());
-        let (focus_tx, _focus_rx) = watch::channel(FocusState {
+        let (focus_tx, focus_rx) = watch::channel(FocusState {
             active_peer: self.config.peer_id,
             active_display: 0,
             cursor_x: 0,
@@ -113,7 +116,69 @@ impl Coordinator {
             }
         });
 
-        tracing::info!("Coordinator started, managing subsystem actors");
+        // --- Resolve TLS cert/key paths ---
+        let config_dir = s_kvm_config::config_dir();
+        let cert_path = self
+            .config
+            .security
+            .cert_path
+            .clone()
+            .unwrap_or_else(|| config_dir.join("cert.der"));
+        let key_path = self
+            .config
+            .security
+            .key_path
+            .clone()
+            .unwrap_or_else(|| config_dir.join("key.der"));
+
+        // --- Spawn InputActor ---
+        let input_actor = InputActor::new(
+            event_tx.clone(),
+            kvm_active_rx.clone(),
+            focus_rx.clone(),
+            self.config.peer_id,
+            self.shutdown.clone(),
+        );
+        let inject_tx = input_actor.inject_sender();
+        let input_handle = tokio::spawn(async move {
+            if let Err(e) = input_actor.run().await {
+                tracing::error!("Input actor error: {}", e);
+            }
+        });
+
+        // --- Spawn ClipboardActor ---
+        let clipboard_actor = ClipboardActor::new(
+            event_tx.clone(),
+            kvm_active_rx.clone(),
+            self.config.peer_id,
+            self.shutdown.clone(),
+        );
+        let clipboard_incoming_tx = clipboard_actor.incoming_sender();
+        let clipboard_handle = tokio::spawn(async move {
+            if let Err(e) = clipboard_actor.run().await {
+                tracing::error!("Clipboard actor error: {}", e);
+            }
+        });
+
+        // --- Spawn NetworkActor ---
+        let network_actor = NetworkActor::new(
+            event_tx.clone(),
+            self.config.peer_id,
+            self.config.machine_name.clone(),
+            self.config.network.listen_port,
+            self.config.network.mdns_enabled,
+            cert_path,
+            key_path,
+            focus_tx.clone(),
+            self.shutdown.clone(),
+        );
+        let network_handle = tokio::spawn(async move {
+            if let Err(e) = network_actor.run().await {
+                tracing::error!("Network actor error: {}", e);
+            }
+        });
+
+        tracing::info!("Coordinator started, all actors spawned");
 
         // Main event loop
         loop {
@@ -138,23 +203,58 @@ impl Coordinator {
                             tracing::info!(active = active, "KVM toggled");
                             let _ = kvm_active_tx.send(*active);
                         }
-                        CoordinatorEvent::IncomingInput(_msg) => {
+                        CoordinatorEvent::IncomingInput(msg) => {
                             tracing::trace!("Incoming input event");
-                            // TODO: Route to input injector
+                            // Route to input injector
+                            match msg {
+                                InputMessage::Event(input_event) => {
+                                    let _ = inject_tx.send(input_event.clone()).await;
+                                }
+                                InputMessage::EventBatch(events) => {
+                                    for input_event in events {
+                                        let _ = inject_tx.send(input_event.clone()).await;
+                                    }
+                                }
+                            }
                         }
                         CoordinatorEvent::OutgoingInput(_msg) => {
                             tracing::trace!("Outgoing input event");
-                            // TODO: Route to network layer for forwarding
+                            // Network actor handles outgoing via PeerManager
+                            // TODO: Route to network layer for forwarding to focused peer
                         }
-                        CoordinatorEvent::ControlReceived(peer_id, _msg) => {
+                        CoordinatorEvent::ControlReceived(peer_id, msg) => {
                             tracing::debug!(peer = %peer_id, "Control message received");
-                            // TODO: Handle control messages
+                            match msg {
+                                ControlMessage::HeartbeatAck { .. } => {
+                                    // Latency tracking handled by PeerManager
+                                }
+                                ControlMessage::ScreenEnter { display_id, x, y, .. } => {
+                                    let _ = focus_tx.send(FocusState {
+                                        active_peer: *peer_id,
+                                        active_display: *display_id,
+                                        cursor_x: *x,
+                                        cursor_y: *y,
+                                    });
+                                }
+                                ControlMessage::ScreenLeave { .. } => {
+                                    let _ = focus_tx.send(FocusState {
+                                        active_peer: self.config.peer_id,
+                                        active_display: 0,
+                                        cursor_x: 0,
+                                        cursor_y: 0,
+                                    });
+                                }
+                                _ => {}
+                            }
                         }
                         CoordinatorEvent::DataReceived(peer_id, msg) => {
                             match msg {
-                                DataMessage::ClipboardUpdate { .. } => {
+                                DataMessage::ClipboardUpdate { content_type, data } => {
                                     tracing::debug!(peer = %peer_id, "Clipboard update received");
-                                    // TODO: Route to clipboard manager
+                                    // Route to clipboard actor for application
+                                    if *peer_id != self.config.peer_id {
+                                        let _ = clipboard_incoming_tx.send(msg.clone()).await;
+                                    }
                                 }
                                 DataMessage::Fido2Request { .. } => {
                                     tracing::debug!(peer = %peer_id, "FIDO2 request received");
@@ -181,8 +281,11 @@ impl Coordinator {
             }
         }
 
-        // Graceful shutdown — wait for IPC to close
+        // Graceful shutdown — wait for actors to close
         ipc_handle.abort();
+        network_handle.abort();
+        input_handle.abort();
+        clipboard_handle.abort();
 
         tracing::info!("Coordinator stopped");
         Ok(())

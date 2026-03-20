@@ -1,7 +1,7 @@
 //! Input actor — manages input capture, injection, and edge detection.
 
-use s_kvm_core::{InputEvent, FocusState, PeerId};
 use s_kvm_core::protocol::InputMessage;
+use s_kvm_core::{FocusState, InputEvent, PeerId};
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
@@ -17,6 +17,10 @@ pub struct InputActor {
     focus_rx: watch::Receiver<FocusState>,
     /// This machine's peer ID.
     local_peer_id: PeerId,
+    /// Sender half for injecting remote input events.
+    inject_tx: mpsc::Sender<InputEvent>,
+    /// Receiver half for injecting remote input events.
+    inject_rx: mpsc::Receiver<InputEvent>,
     /// Cancellation token.
     shutdown: CancellationToken,
 }
@@ -29,29 +33,48 @@ impl InputActor {
         local_peer_id: PeerId,
         shutdown: CancellationToken,
     ) -> Self {
+        let (inject_tx, inject_rx) = mpsc::channel(512);
         Self {
             event_tx,
             kvm_active_rx,
             focus_rx,
             local_peer_id,
+            inject_tx,
+            inject_rx,
             shutdown,
         }
+    }
+
+    /// Get a sender for injecting remote input events.
+    pub fn inject_sender(&self) -> mpsc::Sender<InputEvent> {
+        self.inject_tx.clone()
     }
 
     /// Run the input actor.
     pub async fn run(mut self) -> anyhow::Result<()> {
         tracing::info!("Input actor starting");
 
-        // Channel for receiving input events from capture
-        let (_input_tx, mut input_rx) = mpsc::channel::<InputEvent>(512);
+        // Create platform-specific capture and injector backends
+        let mut capture = s_kvm_input::create_capture();
+        let mut injector = s_kvm_input::create_injector();
 
-        // Channel for receiving events to inject
-        let (_inject_tx, mut inject_rx) = mpsc::channel::<InputEvent>(512);
+        // Initialize the injector
+        if let Err(e) = injector.init().await {
+            tracing::error!("Failed to initialize input injector: {}", e);
+        }
+
+        // Receiver for captured input events (set when capture starts)
+        let mut capture_rx: Option<mpsc::Receiver<InputEvent>> = None;
 
         loop {
             tokio::select! {
                 // Handle captured input events
-                Some(event) = input_rx.recv() => {
+                Some(event) = async {
+                    match capture_rx.as_mut() {
+                        Some(rx) => rx.recv().await,
+                        None => std::future::pending().await,
+                    }
+                } => {
                     let focus = self.focus_rx.borrow().clone();
                     let kvm_active = *self.kvm_active_rx.borrow();
 
@@ -64,16 +87,59 @@ impl InputActor {
                 }
 
                 // Handle events to inject (from remote peer)
-                Some(_event) = inject_rx.recv() => {
-                    // TODO: Inject via InputInjector
-                    tracing::trace!("Injecting input event");
+                Some(event) = self.inject_rx.recv() => {
+                    if let Err(e) = injector.inject(event).await {
+                        tracing::warn!("Input injection failed: {}", e);
+                    }
                 }
 
                 // KVM state changed
                 Ok(()) = self.kvm_active_rx.changed() => {
                     let active = *self.kvm_active_rx.borrow();
                     tracing::info!(active = active, "Input actor: KVM state changed");
-                    // TODO: Start/stop input capture and grab based on state
+
+                    if active {
+                        // Start capturing input
+                        match capture.start().await {
+                            Ok(rx) => {
+                                capture_rx = Some(rx);
+                                tracing::info!("Input capture started");
+                            }
+                            Err(e) => {
+                                tracing::error!("Failed to start input capture: {}", e);
+                            }
+                        }
+                    } else {
+                        // Stop capturing and ungrab
+                        if capture.is_active() {
+                            let _ = capture.ungrab().await;
+                            if let Err(e) = capture.stop().await {
+                                tracing::warn!("Failed to stop input capture: {}", e);
+                            }
+                            capture_rx = None;
+                            tracing::info!("Input capture stopped");
+                        }
+                    }
+                }
+
+                // Focus changed — handle grab/ungrab
+                Ok(()) = self.focus_rx.changed() => {
+                    let focus = self.focus_rx.borrow().clone();
+                    let kvm_active = *self.kvm_active_rx.borrow();
+
+                    if kvm_active && capture.is_active() {
+                        if focus.active_peer != self.local_peer_id {
+                            // Focus moved to remote — grab input
+                            if let Err(e) = capture.grab().await {
+                                tracing::warn!("Failed to grab input: {}", e);
+                            }
+                        } else {
+                            // Focus is local — ungrab input
+                            if let Err(e) = capture.ungrab().await {
+                                tracing::warn!("Failed to ungrab input: {}", e);
+                            }
+                        }
+                    }
                 }
 
                 // Shutdown
@@ -85,15 +151,13 @@ impl InputActor {
         }
 
         // Cleanup
+        if capture.is_active() {
+            let _ = capture.ungrab().await;
+            let _ = capture.stop().await;
+        }
+        let _ = injector.shutdown().await;
+
         tracing::info!("Input actor stopped");
         Ok(())
-    }
-
-    /// Get a sender for injecting remote input events.
-    pub fn inject_sender(&self) -> mpsc::Sender<InputEvent> {
-        // This would be created during setup and shared with the network actor
-        // For now, create a dummy channel
-        let (tx, _) = mpsc::channel(512);
-        tx
     }
 }
