@@ -86,6 +86,7 @@ impl VideoCapture for DummyCapture {
                     format: PixelFormat::Bgra,
                     timestamp_us: start.elapsed().as_micros() as u64,
                     frame_number,
+                    dirty_rects: vec![], // Dummy frames are always full-frame updates
                 };
 
                 if tx.send(frame).await.is_err() {
@@ -124,6 +125,47 @@ impl VideoCapture for DummyCapture {
             scale_factor: 1.0,
             is_primary: true,
         }]
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PipeWireCapture — Linux Wayland screen capture (stub)
+// ---------------------------------------------------------------------------
+
+/// PipeWire-based screen capture for Wayland compositors.
+///
+/// This is a placeholder — the real implementation will use `pipewire-rs`
+/// with the ScreenCast portal (xdg-desktop-portal) to negotiate DMA-BUF
+/// frame access.
+pub struct PipeWireCapture {
+    _private: (),
+}
+
+impl PipeWireCapture {
+    /// Create a new PipeWire capture source.
+    ///
+    /// In the real implementation this will connect to PipeWire and open a
+    /// ScreenCast session via the xdg-desktop-portal D-Bus interface.
+    pub fn new() -> Result<Self> {
+        anyhow::bail!(
+            "PipeWire capture is not yet implemented — use DummyCapture for testing"
+        );
+    }
+}
+
+#[async_trait]
+impl VideoCapture for PipeWireCapture {
+    async fn start(&mut self, _config: CaptureConfig) -> Result<mpsc::Receiver<VideoFrame>> {
+        anyhow::bail!("PipeWire capture not implemented")
+    }
+
+    async fn stop(&mut self) -> Result<()> {
+        Ok(())
+    }
+
+    fn displays(&self) -> Vec<DisplayInfo> {
+        // Real implementation: query PipeWire/portal for available monitors
+        vec![]
     }
 }
 
@@ -183,5 +225,10 @@ mod tests {
         let displays = cap.displays();
         assert_eq!(displays.len(), 1);
         assert_eq!(displays[0].width, 1920);
+    }
+
+    #[test]
+    fn pipewire_capture_returns_not_implemented() {
+        assert!(PipeWireCapture::new().is_err());
     }
 }

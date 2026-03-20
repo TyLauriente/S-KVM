@@ -12,7 +12,7 @@ pub trait VideoEncoder: Send {
     /// Flush any buffered frames from the encoder.
     fn flush(&mut self) -> Result<Vec<EncodedPacket>>;
 
-    /// Force the next encoded frame to be a keyframe.
+    /// Force the next encoded frame to be a keyframe (IDR).
     fn force_keyframe(&mut self);
 }
 
@@ -79,8 +79,12 @@ mod ffmpeg_enc {
     use super::*;
     use ffmpeg_next as ffmpeg;
     use s_kvm_core::protocol::VideoCodec;
+    use tracing::{info, warn};
 
-    /// Hardware-accelerated or software encoder backed by FFmpeg.
+    /// Video encoder backed by FFmpeg (software or hardware-accelerated).
+    ///
+    /// Tries the configured `hw_accel` first; falls back to the generic
+    /// software encoder if the hardware one is not available.
     pub struct SoftwareEncoder {
         encoder: ffmpeg::encoder::video::Video,
         scaler: ffmpeg::software::scaling::Context,
@@ -93,9 +97,8 @@ mod ffmpeg_enc {
         pub fn new(config: EncoderConfig) -> Result<Self> {
             ffmpeg::init()?;
 
-            let codec_id = video_codec_to_ffmpeg(config.codec);
-            let codec = ffmpeg::encoder::find(codec_id)
-                .ok_or_else(|| anyhow::anyhow!("encoder for {:?} not found", config.codec))?;
+            // Try hardware encoder first, then fall back to software.
+            let (codec, encoder_label) = find_encoder(&config)?;
 
             let context = ffmpeg::codec::context::Context::new_with_codec(codec);
             let mut video = context.encoder().video()?;
@@ -104,14 +107,18 @@ mod ffmpeg_enc {
             video.set_format(ffmpeg::format::Pixel::YUV420P);
             video.set_time_base(ffmpeg::Rational(1, config.fps as i32));
             video.set_bit_rate(usize::from(config.bitrate_kbps) * 1000);
+            video.set_max_b_frames(config.max_b_frames as i32);
 
-            let mut opts = ffmpeg::Dictionary::new();
-            if config.codec == VideoCodec::H264 {
-                opts.set("preset", config.preset.as_str());
-                opts.set("tune", "zerolatency");
-            }
-
+            let opts = build_encoder_opts(&config, &encoder_label);
             let encoder = video.open_as_with(codec, opts)?;
+
+            info!(
+                encoder = encoder_label,
+                width = config.width,
+                height = config.height,
+                bitrate_kbps = config.bitrate_kbps,
+                "opened video encoder"
+            );
 
             let scaler = ffmpeg::software::scaling::Context::get(
                 ffmpeg::format::Pixel::BGRA,
@@ -200,6 +207,84 @@ mod ffmpeg_enc {
         }
     }
 
+    /// Locate the best available encoder for the given config.
+    /// Returns the codec and a human-readable label.
+    fn find_encoder(config: &EncoderConfig) -> Result<(ffmpeg::Codec, String)> {
+        // Try hardware encoder if requested.
+        if config.hw_accel != HwAccel::None {
+            if let Some(name) = config.hw_accel.encoder_name(config.codec) {
+                if let Some(codec) = ffmpeg::encoder::find_by_name(name) {
+                    return Ok((codec, name.to_string()));
+                }
+                warn!(
+                    hw = ?config.hw_accel,
+                    name,
+                    "hardware encoder not found, falling back to software"
+                );
+            }
+        }
+
+        // Software fallback.
+        let codec_id = video_codec_to_ffmpeg(config.codec);
+        let codec = ffmpeg::encoder::find(codec_id)
+            .ok_or_else(|| anyhow::anyhow!("encoder for {:?} not found", config.codec))?;
+        let label = format!("{:?} (software)", config.codec);
+        Ok((codec, label))
+    }
+
+    /// Build FFmpeg option dictionary for ultra-low-latency / KVM-style encoding.
+    fn build_encoder_opts(config: &EncoderConfig, encoder_name: &str) -> ffmpeg::Dictionary {
+        let mut opts = ffmpeg::Dictionary::new();
+        let is_nvenc = encoder_name.contains("nvenc");
+        let is_qsv = encoder_name.contains("qsv");
+        let is_vaapi = encoder_name.contains("vaapi");
+
+        // --- Rate control ---
+        match config.rate_control {
+            RateControl::Cbr => {
+                if is_nvenc {
+                    opts.set("rc", "cbr");
+                } else if is_qsv {
+                    opts.set("rate_control", "cbr");
+                } else {
+                    // x264/x265: use nal-hrd + vbv for CBR-like behaviour
+                    opts.set("nal-hrd", "cbr");
+                }
+            }
+            RateControl::Vbr => {
+                if is_nvenc {
+                    opts.set("rc", "vbr");
+                }
+            }
+            RateControl::Crf { quality } => {
+                if !is_nvenc && !is_qsv && !is_vaapi {
+                    opts.set("crf", &quality.to_string());
+                }
+            }
+        }
+
+        // --- Preset ---
+        if is_nvenc {
+            opts.set("preset", config.preset.nvenc_preset());
+            opts.set("tune", "ull"); // ultra-low-latency
+            opts.set("zerolatency", "1");
+            opts.set("rc-lookahead", &config.lookahead.to_string());
+        } else if !is_vaapi {
+            // x264 / x265 software presets
+            if config.codec == VideoCodec::H264 || config.codec == VideoCodec::H265 {
+                opts.set("preset", config.preset.as_str());
+                opts.set("tune", "zerolatency");
+            }
+        }
+
+        // --- B-frames ---
+        if config.max_b_frames == 0 && !is_vaapi {
+            opts.set("bf", "0");
+        }
+
+        opts
+    }
+
     fn video_codec_to_ffmpeg(codec: VideoCodec) -> ffmpeg::codec::Id {
         match codec {
             VideoCodec::H264 => ffmpeg::codec::Id::H264,
@@ -235,6 +320,7 @@ mod tests {
             format: PixelFormat::Bgra,
             timestamp_us: 0,
             frame_number: 0,
+            dirty_rects: vec![],
         };
 
         let packets = enc.encode(&frame).unwrap();
@@ -254,6 +340,7 @@ mod tests {
             format: PixelFormat::Bgra,
             timestamp_us: 0,
             frame_number: 0,
+            dirty_rects: vec![],
         };
 
         // Frame 0 is a keyframe.
@@ -268,5 +355,14 @@ mod tests {
         enc.force_keyframe();
         let p = enc.encode(&frame).unwrap();
         assert!(p[0].is_keyframe);
+    }
+
+    #[test]
+    fn low_latency_config_defaults() {
+        let cfg = EncoderConfig::low_latency(VideoCodec::H264, 1920, 1080, 8000);
+        assert_eq!(cfg.max_b_frames, 0);
+        assert_eq!(cfg.lookahead, 0);
+        assert_eq!(cfg.rate_control, RateControl::Cbr);
+        assert_eq!(cfg.preset, EncoderPreset::Ultrafast);
     }
 }

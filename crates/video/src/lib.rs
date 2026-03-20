@@ -14,7 +14,7 @@ pub mod decode;
 pub mod encode;
 
 // Convenience re-exports.
-pub use capture::{DummyCapture, VideoCapture};
+pub use capture::{DummyCapture, PipeWireCapture, VideoCapture};
 pub use decode::{RawDecoder, VideoDecoder};
 pub use encode::{RawEncoder, VideoEncoder};
 pub use types::*;

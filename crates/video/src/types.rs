@@ -46,6 +46,15 @@ impl PixelFormat {
     }
 }
 
+/// A rectangular region within a frame that changed since the last frame.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct DirtyRect {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
 /// A single raw video frame.
 #[derive(Debug, Clone)]
 pub struct VideoFrame {
@@ -55,6 +64,8 @@ pub struct VideoFrame {
     pub format: PixelFormat,
     pub timestamp_us: u64,
     pub frame_number: u64,
+    /// Regions that changed since the previous frame (empty = full frame changed).
+    pub dirty_rects: Vec<DirtyRect>,
 }
 
 /// Region of a display to capture.
@@ -84,6 +95,59 @@ pub struct EncodedPacket {
     pub codec: VideoCodec,
 }
 
+/// Hardware acceleration backend.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HwAccel {
+    /// No hardware acceleration — pure software encoding/decoding.
+    None,
+    /// NVIDIA NVENC/NVDEC.
+    Nvenc,
+    /// Intel Quick Sync Video.
+    Qsv,
+    /// VA-API (Linux).
+    Vaapi,
+    /// AMD AMF.
+    Amf,
+}
+
+impl HwAccel {
+    /// FFmpeg encoder name suffix for this accelerator (e.g. `"h264_nvenc"`).
+    pub fn encoder_name(self, codec: VideoCodec) -> Option<&'static str> {
+        match (self, codec) {
+            (Self::None, _) => Option::None,
+            (Self::Nvenc, VideoCodec::H264) => Some("h264_nvenc"),
+            (Self::Nvenc, VideoCodec::H265) => Some("hevc_nvenc"),
+            (Self::Nvenc, VideoCodec::AV1) => Some("av1_nvenc"),
+            (Self::Qsv, VideoCodec::H264) => Some("h264_qsv"),
+            (Self::Qsv, VideoCodec::H265) => Some("hevc_qsv"),
+            (Self::Qsv, VideoCodec::AV1) => Some("av1_qsv"),
+            (Self::Vaapi, VideoCodec::H264) => Some("h264_vaapi"),
+            (Self::Vaapi, VideoCodec::H265) => Some("hevc_vaapi"),
+            (Self::Vaapi, VideoCodec::AV1) => Some("av1_vaapi"),
+            (Self::Amf, VideoCodec::H264) => Some("h264_amf"),
+            (Self::Amf, VideoCodec::H265) => Some("hevc_amf"),
+            _ => Option::None,
+        }
+    }
+}
+
+/// Rate control mode for the encoder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RateControl {
+    /// Constant Bitrate — target the configured bitrate_kbps exactly.
+    Cbr,
+    /// Variable Bitrate — encoder decides bitrate within bounds.
+    Vbr,
+    /// Constant Rate Factor — quality-based (CRF value stored in bitrate_kbps field is ignored).
+    Crf { quality: u8 },
+}
+
+impl Default for RateControl {
+    fn default() -> Self {
+        Self::Cbr
+    }
+}
+
 /// Encoder quality/speed preset.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EncoderPreset {
@@ -106,6 +170,17 @@ impl EncoderPreset {
             Self::Slow => "slow",
         }
     }
+
+    /// NVENC preset equivalent (P1 = fastest/lowest latency, P7 = slowest/best quality).
+    pub fn nvenc_preset(self) -> &'static str {
+        match self {
+            Self::Ultrafast | Self::Superfast => "p1",
+            Self::Veryfast => "p2",
+            Self::Fast => "p3",
+            Self::Medium => "p4",
+            Self::Slow => "p7",
+        }
+    }
 }
 
 impl Default for EncoderPreset {
@@ -123,6 +198,14 @@ pub struct EncoderConfig {
     pub fps: u32,
     pub bitrate_kbps: u32,
     pub preset: EncoderPreset,
+    /// Preferred hardware acceleration (falls back to software if unavailable).
+    pub hw_accel: HwAccel,
+    /// Rate control mode.
+    pub rate_control: RateControl,
+    /// Maximum number of B-frames (0 for lowest latency).
+    pub max_b_frames: u32,
+    /// Encoder lookahead depth (0 for lowest latency).
+    pub lookahead: u32,
 }
 
 impl Default for EncoderConfig {
@@ -134,6 +217,28 @@ impl Default for EncoderConfig {
             fps: 60,
             bitrate_kbps: 5000,
             preset: EncoderPreset::default(),
+            hw_accel: HwAccel::None,
+            rate_control: RateControl::Cbr,
+            max_b_frames: 0,
+            lookahead: 0,
+        }
+    }
+}
+
+impl EncoderConfig {
+    /// Ultra-low-latency preset for real-time KVM use.
+    pub fn low_latency(codec: VideoCodec, width: u32, height: u32, bitrate_kbps: u32) -> Self {
+        Self {
+            codec,
+            width,
+            height,
+            fps: 60,
+            bitrate_kbps,
+            preset: EncoderPreset::Ultrafast,
+            hw_accel: HwAccel::None,
+            rate_control: RateControl::Cbr,
+            max_b_frames: 0,
+            lookahead: 0,
         }
     }
 }
@@ -157,4 +262,39 @@ pub(crate) fn read_raw_header(buf: &[u8]) -> Option<(u32, u32, PixelFormat)> {
     let height = u32::from_le_bytes(buf[4..8].try_into().ok()?);
     let format = PixelFormat::from_tag(buf[8])?;
     Some((width, height, format))
+}
+
+/// Detect available hardware acceleration backends on this system.
+///
+/// When the `ffmpeg` feature is enabled, this probes FFmpeg for available
+/// hardware encoders. Without it, returns an empty list.
+pub fn detect_hw_accels(codec: VideoCodec) -> Vec<HwAccel> {
+    #[cfg(feature = "ffmpeg")]
+    {
+        _detect_hw_accels_ffmpeg(codec)
+    }
+    #[cfg(not(feature = "ffmpeg"))]
+    {
+        let _ = codec;
+        vec![]
+    }
+}
+
+#[cfg(feature = "ffmpeg")]
+fn _detect_hw_accels_ffmpeg(codec: VideoCodec) -> Vec<HwAccel> {
+    use ffmpeg_next as ffmpeg;
+    let _ = ffmpeg::init();
+
+    let candidates = [HwAccel::Nvenc, HwAccel::Qsv, HwAccel::Vaapi, HwAccel::Amf];
+    candidates
+        .iter()
+        .filter(|accel| {
+            if let Some(name) = accel.encoder_name(codec) {
+                ffmpeg::encoder::find_by_name(name).is_some()
+            } else {
+                false
+            }
+        })
+        .copied()
+        .collect()
 }

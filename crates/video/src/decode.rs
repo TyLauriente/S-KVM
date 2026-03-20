@@ -56,6 +56,7 @@ impl VideoDecoder for RawDecoder {
             format,
             timestamp_us: packet.pts as u64,
             frame_number: self.frame_count,
+            dirty_rects: vec![],
         };
         self.frame_count += 1;
 
@@ -157,6 +158,7 @@ mod ffmpeg_dec {
                     format: self.output_format,
                     timestamp_us: decoded.pts().unwrap_or(0) as u64,
                     frame_number: self.frame_count,
+                    dirty_rects: vec![],
                 });
                 self.frame_count += 1;
             }
@@ -227,6 +229,7 @@ mod tests {
             format: PixelFormat::Bgra,
             timestamp_us: 1000,
             frame_number: 0,
+            dirty_rects: vec![],
         };
 
         let packets = enc.encode(&original).unwrap();
