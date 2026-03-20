@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 s-kvm-core = { workspace = true }
 cpal = { workspace = true }
+opus = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
