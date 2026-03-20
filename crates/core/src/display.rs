@@ -251,6 +251,7 @@ fn parse_first_mode(modes: &str) -> (u32, u32, f64) {
 fn enumerate_windows() -> Result<Vec<DisplayInfo>, Box<dyn std::error::Error>> {
     use std::mem;
     use windows::Win32::Graphics::Gdi::*;
+    use windows::Win32::UI::HiDpi::*;
     use windows::Win32::UI::WindowsAndMessaging::*;
 
     let mut displays = Vec::new();
@@ -316,7 +317,14 @@ fn enumerate_windows() -> Result<Vec<DisplayInfo>, Box<dyn std::error::Error>> {
                 width: (rect.right - rect.left) as u32,
                 height: (rect.bottom - rect.top) as u32,
                 refresh_rate: refresh,
-                scale_factor: 1.0, // TODO: GetDpiForMonitor
+                scale_factor: {
+                    let mut dpi_x: u32 = 96;
+                    let mut dpi_y: u32 = 96;
+                    let _ = unsafe {
+                        GetDpiForMonitor(*hmonitor, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y)
+                    };
+                    dpi_x as f64 / 96.0
+                },
                 is_primary,
             });
         }
