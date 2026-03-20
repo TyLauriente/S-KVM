@@ -15,6 +15,8 @@ pub mod encode;
 
 // Convenience re-exports.
 pub use capture::{DummyCapture, PipeWireCapture, VideoCapture};
+#[cfg(feature = "scrap-capture")]
+pub use capture::ScrapCapture;
 pub use decode::{RawDecoder, VideoDecoder};
 pub use encode::{RawEncoder, VideoEncoder};
 pub use types::*;

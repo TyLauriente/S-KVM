@@ -6,6 +6,7 @@ edition.workspace = true
 [features]
 default = []
 ffmpeg = ["dep:ffmpeg-next"]
+scrap-capture = ["dep:scrap"]
 
 [dependencies]
 s-kvm-core = { workspace = true }
@@ -18,6 +19,7 @@ serde = { workspace = true }
 bincode = { workspace = true }
 futures = { workspace = true }
 ffmpeg-next = { workspace = true, optional = true }
+scrap = { workspace = true, optional = true }
 
 [dev-dependencies]
 mockall = { workspace = true }

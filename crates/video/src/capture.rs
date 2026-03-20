@@ -169,6 +169,175 @@ impl VideoCapture for PipeWireCapture {
     }
 }
 
+// ---------------------------------------------------------------------------
+// ScrapCapture — real screen capture via the `scrap` crate
+// ---------------------------------------------------------------------------
+
+/// Cross-platform screen capture using the `scrap` crate.
+///
+/// On Linux/X11 this uses XShm, on Windows it uses DXGI Desktop Duplication.
+/// Only available when compiled with the `scrap-capture` feature.
+#[cfg(feature = "scrap-capture")]
+pub struct ScrapCapture {
+    task: Option<tokio::task::JoinHandle<()>>,
+    stop_tx: Option<tokio::sync::oneshot::Sender<()>>,
+}
+
+#[cfg(feature = "scrap-capture")]
+impl ScrapCapture {
+    pub fn new() -> Self {
+        Self {
+            task: None,
+            stop_tx: None,
+        }
+    }
+}
+
+#[cfg(feature = "scrap-capture")]
+#[async_trait]
+impl VideoCapture for ScrapCapture {
+    async fn start(&mut self, config: CaptureConfig) -> Result<mpsc::Receiver<VideoFrame>> {
+        self.stop().await?;
+
+        let (tx, rx) = mpsc::channel(4);
+        let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
+
+        let display_id = config.display_id as usize;
+        let fps = config.fps.max(1);
+
+        // Build the capturer on the blocking thread where it will be used,
+        // since scrap types are !Send on some platforms.
+        let task = tokio::task::spawn_blocking(move || {
+            use scrap::{Capturer, Display};
+
+            let displays = match Display::all() {
+                Ok(d) => d,
+                Err(e) => {
+                    tracing::error!("Failed to enumerate displays: {e}");
+                    return;
+                }
+            };
+
+            let display = match displays.into_iter().nth(display_id) {
+                Some(d) => d,
+                None => {
+                    tracing::error!("Display {display_id} not found");
+                    return;
+                }
+            };
+
+            let width = display.width() as u32;
+            let height = display.height() as u32;
+
+            let mut capturer = match Capturer::new(display) {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::error!("Failed to create capturer: {e}");
+                    return;
+                }
+            };
+
+            let frame_interval = std::time::Duration::from_micros(1_000_000 / u64::from(fps));
+            let start = std::time::Instant::now();
+            let mut frame_number: u64 = 0;
+            let mut stop_rx = stop_rx;
+
+            loop {
+                // Check for stop signal.
+                match stop_rx.try_recv() {
+                    Ok(()) | Err(tokio::sync::oneshot::error::TryRecvError::Closed) => break,
+                    Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {}
+                }
+
+                match capturer.frame() {
+                    Ok(frame) => {
+                        let stride = frame.len() / height as usize;
+                        let row_bytes = width as usize * 4;
+
+                        // Copy frame data, removing any padding from stride.
+                        let data = if stride == row_bytes {
+                            frame.to_vec()
+                        } else {
+                            let mut data = Vec::with_capacity(row_bytes * height as usize);
+                            for row in 0..height as usize {
+                                let start = row * stride;
+                                data.extend_from_slice(&frame[start..start + row_bytes]);
+                            }
+                            data
+                        };
+
+                        let video_frame = VideoFrame {
+                            data,
+                            width,
+                            height,
+                            format: PixelFormat::Bgra,
+                            timestamp_us: start.elapsed().as_micros() as u64,
+                            frame_number,
+                            dirty_rects: vec![],
+                        };
+
+                        if tx.blocking_send(video_frame).is_err() {
+                            break; // Receiver dropped
+                        }
+
+                        frame_number += 1;
+                        std::thread::sleep(frame_interval);
+                    }
+                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        // No new frame yet — retry after a short sleep.
+                        std::thread::sleep(std::time::Duration::from_millis(1));
+                    }
+                    Err(e) => {
+                        tracing::error!("Capture error: {e}");
+                        break;
+                    }
+                }
+            }
+        });
+
+        self.task = Some(task);
+        self.stop_tx = Some(stop_tx);
+        Ok(rx)
+    }
+
+    async fn stop(&mut self) -> Result<()> {
+        if let Some(tx) = self.stop_tx.take() {
+            let _ = tx.send(());
+        }
+        if let Some(task) = self.task.take() {
+            let _ = task.await;
+        }
+        Ok(())
+    }
+
+    fn displays(&self) -> Vec<DisplayInfo> {
+        match scrap::Display::all() {
+            Ok(displays) => displays
+                .into_iter()
+                .enumerate()
+                .map(|(i, d)| {
+                    let is_primary = i == 0; // scrap lists primary first
+                    DisplayInfo {
+                        id: i as u32,
+                        name: format!("Display {i}"),
+                        x: 0,
+                        y: 0,
+                        width: d.width() as u32,
+                        height: d.height() as u32,
+                        refresh_rate: 60.0, // scrap doesn't expose refresh rate
+                        scale_factor: 1.0,
+                        is_primary,
+                    }
+                })
+                .collect(),
+            Err(e) => {
+                tracing::warn!("Failed to enumerate displays: {e}");
+                vec![]
+            }
+        }
+    }
+}
+
 /// Convert HSV (h in 0..360, s/v in 0..1) to RGB bytes.
 fn hsv_to_rgb(h: f64, s: f64, v: f64) -> (u8, u8, u8) {
     let c = v * s;

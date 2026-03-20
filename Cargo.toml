@@ -50,6 +50,7 @@ evdev = { version = "0.12", features = ["tokio"] }
 # Video
 ffmpeg-next = "7"
 wgpu = "25"
+scrap = "0.5"
 
 # Audio
 cpal = "0.16"
