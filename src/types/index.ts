@@ -56,6 +56,7 @@ export interface PeerStatus {
   state: ConnectionState;
   latency_ms: number | null;
   displays: DisplayInfo[];
+  capabilities: PeerCapabilities;
 }
 
 export interface KvmStatus {

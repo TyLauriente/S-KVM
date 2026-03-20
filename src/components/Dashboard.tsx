@@ -83,9 +83,9 @@ function Dashboard() {
               <span>{status.active ? "Pause KVM" : "Start KVM"}</span>
             </button>
             {connectedPeers.map((peer) => (
-              <button key={peer.info.id} className="action-btn">
+              <button key={peer.id} className="action-btn">
                 <span className="action-icon">{"\uD83D\uDDA5"}</span>
-                <span>Switch to {peer.info.hostname}</span>
+                <span>Switch to {peer.hostname}</span>
               </button>
             ))}
             <button className="action-btn">
@@ -112,10 +112,10 @@ function Dashboard() {
           ) : (
             <div className="peer-list-compact">
               {connectedPeers.map((peer) => (
-                <div key={peer.info.id} className="peer-row">
+                <div key={peer.id} className="peer-row">
                   <span className="peer-dot active" />
-                  <span className="peer-name">{peer.info.hostname}</span>
-                  <span className="peer-os-badge">{peer.info.os}</span>
+                  <span className="peer-name">{peer.hostname}</span>
+                  <span className="peer-os-badge">{peer.os}</span>
                   {peer.latency_ms != null && (
                     <span className="peer-latency">
                       {peer.latency_ms.toFixed(1)}ms

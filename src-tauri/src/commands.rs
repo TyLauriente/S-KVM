@@ -4,7 +4,7 @@ use crate::state::{AppState, PeerState};
 use s_kvm_config::AppConfig;
 use s_kvm_core::{ConnectionState, DisplayInfo, PeerId, PeerInfo, ScreenLink};
 use serde::{Deserialize, Serialize};
-use tauri::State;
+use tauri::{Emitter, State};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PeerStatus {
@@ -14,6 +14,7 @@ pub struct PeerStatus {
     pub state: ConnectionState,
     pub latency_ms: Option<f64>,
     pub displays: Vec<DisplayInfo>,
+    pub capabilities: s_kvm_core::PeerCapabilities,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -62,6 +63,7 @@ pub async fn get_peers(state: State<'_, AppState>) -> Result<Vec<PeerStatus>, St
             state: p.connection_state,
             latency_ms: p.latency_ms,
             displays: p.info.displays.clone(),
+            capabilities: p.info.capabilities.clone(),
         })
         .collect();
     Ok(result)
