@@ -59,13 +59,13 @@ export function usePeers() {
   const handlePeerEvent = useCallback(
     (event: PeerEvent) => {
       setPeers((prev) => {
-        const idx = prev.findIndex((p) => p.info.id === event.peer_id);
+        const idx = prev.findIndex((p) => p.id === event.peer_id);
         if (idx === -1) {
           fetchPeers();
           return prev;
         }
         return prev.map((p) =>
-          p.info.id === event.peer_id
+          p.id === event.peer_id
             ? {
                 ...p,
                 state: event.state as PeerStatus["state"],

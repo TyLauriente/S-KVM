@@ -65,7 +65,7 @@ function Dashboard() {
               <span className="action-icon">{status.active ? "⏸" : "▶"}</span>
               <span>{status.active ? "Pause KVM" : "Start KVM"}</span>
             </button>
-            {connectedPeers.map((peer, i) => (
+            {connectedPeers.map((peer) => (
               <button key={peer.id} className="action-btn">
                 <span className="action-icon">🖥</span>
                 <span>Switch to {peer.hostname}</span>

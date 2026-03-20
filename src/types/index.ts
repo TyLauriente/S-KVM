@@ -1,18 +1,16 @@
-// TypeScript interfaces matching Rust types from crates/core/src/
+// TypeScript interfaces matching Rust types from crates/core/src/types.rs
+// and crates/config/src/settings.rs
 
-export interface PeerId {
-  inner: string;
-}
-
-export interface PeerInfo {
-  id: string;
-  hostname: string;
-  os: OsType;
-  displays: DisplayInfo[];
-  capabilities: PeerCapabilities;
-}
-
+export type PeerId = string;
 export type OsType = "Linux" | "Windows" | "MacOS";
+export type ConnectionState =
+  | "Disconnected"
+  | "Connecting"
+  | "Connected"
+  | "Authenticated"
+  | "Active";
+export type ScreenEdge = "Top" | "Bottom" | "Left" | "Right";
+export type VideoCodec = "H264" | "H265" | "VP9" | "AV1";
 
 export interface DisplayInfo {
   id: number;
@@ -34,30 +32,27 @@ export interface PeerCapabilities {
   fido2_forwarding: boolean;
 }
 
-export type ScreenEdge = "Top" | "Bottom" | "Left" | "Right";
+export interface PeerInfo {
+  id: PeerId;
+  hostname: string;
+  os: OsType;
+  displays: DisplayInfo[];
+  capabilities: PeerCapabilities;
+}
 
 export interface ScreenLink {
   source_display: number;
   source_edge: ScreenEdge;
-  target_peer: string;
+  target_peer: PeerId;
   target_display: number;
   offset: number;
 }
 
-export type ConnectionState =
-  | "Disconnected"
-  | "Connecting"
-  | "Connected"
-  | "Authenticated"
-  | "Active";
-
+// Matches Rust PeerStatus from src-tauri/src/commands.rs
 export interface PeerStatus {
-  id: string;
-  hostname: string;
-  os: string;
+  info: PeerInfo;
   state: ConnectionState;
   latency_ms: number | null;
-  displays: DisplayInfo[];
 }
 
 export interface KvmStatus {
@@ -67,16 +62,10 @@ export interface KvmStatus {
   uptime_seconds: number;
 }
 
-export interface AppConfig {
-  peer_id: string;
-  machine_name: string;
-  network: NetworkConfig;
-  screen_links: ScreenLink[];
-  input: InputConfig;
-  video: VideoConfig;
-  audio: AudioConfig;
-  security: SecurityConfig;
-  hotkeys: HotkeyConfig;
+export interface StaticPeer {
+  address: string;
+  port: number;
+  name: string | null;
 }
 
 export interface NetworkConfig {
@@ -84,12 +73,6 @@ export interface NetworkConfig {
   mdns_enabled: boolean;
   mdns_service_type: string;
   static_peers: StaticPeer[];
-}
-
-export interface StaticPeer {
-  address: string;
-  port: number;
-  name: string | null;
 }
 
 export interface InputConfig {
@@ -105,12 +88,17 @@ export interface VideoConfig {
   codec: VideoCodec;
 }
 
-export type VideoCodec = "H264" | "H265" | "VP9" | "AV1";
-
 export interface AudioConfig {
   enabled: boolean;
   bitrate_kbps: number;
   frame_size_ms: number;
+}
+
+export interface TrustedFingerprint {
+  peer_id: PeerId;
+  fingerprint: string;
+  first_seen: string;
+  hostname: string;
 }
 
 export interface SecurityConfig {
@@ -120,17 +108,22 @@ export interface SecurityConfig {
   require_pairing: boolean;
 }
 
-export interface TrustedFingerprint {
-  peer_id: string;
-  fingerprint: string;
-  first_seen: string;
-  hostname: string;
-}
-
 export interface HotkeyConfig {
   toggle_active: string;
   switch_screen: string[];
   lock_screen: string;
+}
+
+export interface AppConfig {
+  peer_id: PeerId;
+  machine_name: string;
+  network: NetworkConfig;
+  screen_links: ScreenLink[];
+  input: InputConfig;
+  video: VideoConfig;
+  audio: AudioConfig;
+  security: SecurityConfig;
+  hotkeys: HotkeyConfig;
 }
 
 export interface ScreenLayoutUpdate {
