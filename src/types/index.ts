@@ -50,9 +50,12 @@ export interface ScreenLink {
 
 // Matches Rust PeerStatus from src-tauri/src/commands.rs
 export interface PeerStatus {
-  info: PeerInfo;
+  id: string;
+  hostname: string;
+  os: string;
   state: ConnectionState;
   latency_ms: number | null;
+  displays: DisplayInfo[];
 }
 
 export interface KvmStatus {
