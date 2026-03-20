@@ -4376,6 +4376,7 @@ dependencies = [
  "proptest",
  "quinn",
  "rcgen",
+ "ring",
  "rustls",
  "s-kvm-config",
  "s-kvm-core",
