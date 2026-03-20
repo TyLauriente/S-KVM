@@ -1,0 +1,6 @@
+# Claude Code session files
+.claude/
+.claude-session/
+CLAUDE.md
+
+.mcp.json
