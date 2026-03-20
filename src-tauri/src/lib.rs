@@ -1,4 +1,5 @@
 mod commands;
+mod daemon_client;
 mod state;
 
 use tauri::{Emitter, Manager};
@@ -42,6 +43,44 @@ pub fn run() {
             let config = s_kvm_config::load_config()
                 .unwrap_or_else(|_| s_kvm_config::AppConfig::default());
             *state.config.lock().unwrap() = config;
+
+            // Try initial daemon connection
+            let app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let state = app_handle.state::<state::AppState>();
+                match daemon_client::DaemonClient::connect().await {
+                    Ok(client) => {
+                        tracing::info!("Connected to S-KVM daemon");
+                        *state.daemon_client.lock().await = Some(client);
+                    }
+                    Err(e) => {
+                        tracing::info!("Daemon not available, running in standalone mode: {}", e);
+                    }
+                }
+            });
+
+            // Spawn reconnection task that retries every 5 seconds
+            let reconnect_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+
+                    let state = reconnect_handle.state::<state::AppState>();
+                    let is_connected = state.daemon_client.lock().await.is_some();
+
+                    if !is_connected {
+                        match daemon_client::DaemonClient::connect().await {
+                            Ok(client) => {
+                                tracing::info!("Reconnected to S-KVM daemon");
+                                *state.daemon_client.lock().await = Some(client);
+                            }
+                            Err(_) => {
+                                tracing::trace!("Daemon still not available, will retry");
+                            }
+                        }
+                    }
+                }
+            });
 
             // Set up system tray menu
             if let Some(tray) = app.tray_by_id("main") {

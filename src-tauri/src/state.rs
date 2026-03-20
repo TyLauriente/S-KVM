@@ -1,5 +1,6 @@
 //! Shared application state for the Tauri app.
 
+use crate::daemon_client::DaemonClient;
 use s_kvm_config::AppConfig;
 use s_kvm_core::{ConnectionState, PeerInfo};
 use std::collections::HashMap;
@@ -16,6 +17,8 @@ pub struct AppState {
     pub peers: Mutex<HashMap<String, PeerState>>,
     /// Application start time.
     pub start_time: Instant,
+    /// Connection to the daemon process (None if daemon is not running).
+    pub daemon_client: tokio::sync::Mutex<Option<DaemonClient>>,
 }
 
 /// State of a connected peer.
@@ -34,6 +37,7 @@ impl AppState {
             kvm_active: Mutex::new(false),
             peers: Mutex::new(HashMap::new()),
             start_time: Instant::now(),
+            daemon_client: tokio::sync::Mutex::new(None),
         }
     }
 
