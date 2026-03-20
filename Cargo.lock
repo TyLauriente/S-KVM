@@ -4330,6 +4330,7 @@ dependencies = [
  "anyhow",
  "futures",
  "mockall",
+ "rustls",
  "s-kvm-audio",
  "s-kvm-config",
  "s-kvm-core",
